@@ -6,6 +6,16 @@ namespace BrewSim
 {
     public class BrewerySimulation
     {
+        public event Action? StateChanged;
+
+        public int WashedCount => washedBuffer.Count;
+        public int FilledCount => filledBuffer.Count;
+        public int ToppedCount => toppedBuffer.Count;
+        public int BoxedCount => boxedBuffer.Count;
+
+        // Call this method after every buffer change:
+        private void OnStateChanged() => StateChanged?.Invoke();
+
         private readonly BoundedBuffer<Bottle> washedBuffer = new(6);
         private readonly BoundedBuffer<Bottle> filledBuffer = new(6);
         private readonly BoundedBuffer<Bottle> toppedBuffer = new(24);
@@ -47,6 +57,7 @@ namespace BrewSim
                 var bottle = new Bottle(Interlocked.Increment(ref bottleId));
                 Console.WriteLine($"[Generator] {bottle}");
                 washedBuffer.Add(bottle);
+                OnStateChanged();
             }
         }
 
@@ -56,9 +67,11 @@ namespace BrewSim
             while (running)
             {
                 var bottle = washedBuffer.Remove();
+                OnStateChanged();
                 Console.WriteLine($"[Washer {machineId}] Washing {bottle}");
                 Thread.Sleep(rand.Next(200, 500));
                 filledBuffer.Add(bottle);
+                OnStateChanged();
                 Console.WriteLine($"[Washer {machineId}] Washed {bottle}");
             }
         }
@@ -69,6 +82,7 @@ namespace BrewSim
             while (running)
             {
                 var bottle = filledBuffer.Remove();
+                OnStateChanged();
                 // Only fill if topping is ready (simulate with buffer space)
                 lock (toppedBuffer)
                 {
@@ -77,6 +91,7 @@ namespace BrewSim
                     Console.WriteLine($"[Filler {machineId}] Filling {bottle}");
                     Thread.Sleep(rand.Next(200, 400));
                     toppedBuffer.Add(bottle);
+                    OnStateChanged();
                     Monitor.PulseAll(toppedBuffer);
                     Console.WriteLine($"[Filler {machineId}] Filled {bottle}");
                 }
@@ -89,9 +104,10 @@ namespace BrewSim
             while (running)
             {
                 var bottle = toppedBuffer.Remove();
+                OnStateChanged();
                 Console.WriteLine($"[Topper {machineId}] Topping {bottle}");
                 Thread.Sleep(rand.Next(150, 350));
-                BoxingCollector.Add(bottle, boxedBuffer);
+                BoxingCollector.Add(bottle, boxedBuffer, OnStateChanged);
                 Console.WriteLine($"[Topper {machineId}] Topped {bottle}");
             }
         }
@@ -102,6 +118,7 @@ namespace BrewSim
             while (running)
             {
                 var box = boxedBuffer.Remove();
+                OnStateChanged();
                 Console.WriteLine($"[Boxer {machineId}] Boxing 24 bottles: {string.Join(", ", box.ConvertAll(b => b.Id))}");
                 Thread.Sleep(rand.Next(500, 1000));
                 Console.WriteLine($"[Boxer {machineId}] Boxed 24 bottles.");
@@ -114,7 +131,7 @@ namespace BrewSim
             private static List<Bottle> currentBox = new(24);
             private static readonly object boxLock = new();
 
-            public static void Add(Bottle bottle, BoundedBuffer<List<Bottle>> boxedBuffer)
+            public static void Add(Bottle bottle, BoundedBuffer<List<Bottle>> boxedBuffer, Action onStateChanged)
             {
                 lock (boxLock)
                 {
@@ -122,6 +139,7 @@ namespace BrewSim
                     if (currentBox.Count == 24)
                     {
                         boxedBuffer.Add(new List<Bottle>(currentBox));
+                        onStateChanged?.Invoke();
                         currentBox.Clear();
                     }
                 }
